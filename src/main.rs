@@ -1,15 +1,12 @@
-extern crate toml;
 extern crate clap;
+extern crate toml;
 
+use clap::{App, Arg};
 use std::env;
-use std::io::prelude::*;
 use std::fs::File;
-use toml::{Value as Toml};
+use std::io::prelude::*;
 use std::process::Command;
-use clap::{
-    App,
-    Arg,
-};
+use toml::Value as Toml;
 
 fn main() -> Result<(), String> {
     let matched_args = App::new("cargo build-deps")
@@ -26,7 +23,7 @@ fn main() -> Result<(), String> {
     let is_nightly = matched_args.is_present("nightly");
     let target = match matched_args.value_of("target") {
         Some(value) => value,
-        None => ""
+        None => "",
     };
     let features = match matched_args.value_of("features") {
         Some(value) => value.split(" ").collect::<Vec<&str>>(),
@@ -45,7 +42,11 @@ fn main() -> Result<(), String> {
 
     for dep in deps {
         build_package(
-            &dep, is_release, &target, is_nightly, features.clone(),
+            &dep,
+            is_release,
+            &target,
+            is_nightly,
+            features.clone(),
             is_all_features,
         )?
     }
@@ -63,33 +64,28 @@ fn get_toml(file_path: &str) -> Toml {
 
 fn parse_package_name(toml: &Toml) -> &str {
     match toml {
-        &Toml::Table(ref table) => {
-            match table.get("package") {
-                Some(&Toml::Table(ref table)) => {
-                    match table.get("name") {
-                        Some(&Toml::String(ref name)) => name,
-                        _ => panic!("failed to parse name"),
-                    }
-                }
-                _ => panic!("failed to parse package"),
-            }
-        }
+        &Toml::Table(ref table) => match table.get("package") {
+            Some(&Toml::Table(ref table)) => match table.get("name") {
+                Some(&Toml::String(ref name)) => name,
+                _ => panic!("failed to parse name"),
+            },
+            _ => panic!("failed to parse package"),
+        },
         _ => panic!("failed to parse Cargo.toml: incorrect format"),
     }
 }
 
 fn cargo_lock_find_package<'a>(toml: &'a Toml, pkg_name: &str) -> Result<&'a Toml, String> {
     match toml.get("package") {
-        Some(&Toml::Array(ref pkgs)) => {
-            pkgs.iter().find(|pkg| {
-                pkg.get("name").map_or(
-                    false, |name| name.as_str().unwrap_or("") == pkg_name,
-                )
-            }).map_or(
-                Err(format!("failed to find package {}", pkg_name)),
-                |x| Ok(x),
-            )
-        }
+        Some(&Toml::Array(ref pkgs)) => pkgs
+            .iter()
+            .find(|pkg| {
+                pkg.get("name")
+                    .map_or(false, |name| name.as_str().unwrap_or("") == pkg_name)
+            })
+            .map_or(Err(format!("failed to find package {}", pkg_name)), |x| {
+                Ok(x)
+            }),
         _ => Err("failed to find packages in Cargo.lock".to_string()),
     }
 }
@@ -98,53 +94,61 @@ fn crate_name_version(toml: &Toml, crate_name: &str) -> Result<String, String> {
     if crate_name.contains(" ") {
         let mut value_parts = crate_name.split(" ");
         let crate_name = value_parts.next().map_or(
-            Err(format!("failed to parse name from dependency string {:?}", crate_name)),
+            Err(format!(
+                "failed to parse name from dependency string {:?}",
+                crate_name
+            )),
             |x| Ok(x),
         )?;
         let crate_version = value_parts.next().map_or(
-            Err(format!("failed to parse version from dependency string {:?}", crate_name)),
+            Err(format!(
+                "failed to parse version from dependency string {:?}",
+                crate_name
+            )),
             |x| Ok(x),
         )?;
         Ok(format!("{}:{}", crate_name, crate_version))
     } else {
-        let value_pkg = cargo_lock_find_package(
-            toml, crate_name,
-        )?;
-        let crate_version = value_pkg.get("version").map_or(
-            Err(format!("Version not found for {}", crate_name)),
-            |x| Ok(x),
-        )?.as_str().map_or(
-            Err(format!("Invalid version field for {}", crate_name)),
-            |x| Ok(x),
-        )?;
+        let value_pkg = cargo_lock_find_package(toml, crate_name)?;
+        let crate_version = value_pkg
+            .get("version")
+            .map_or(Err(format!("Version not found for {}", crate_name)), |x| {
+                Ok(x)
+            })?
+            .as_str()
+            .map_or(
+                Err(format!("Invalid version field for {}", crate_name)),
+                |x| Ok(x),
+            )?;
         Ok(format!("{}:{}", crate_name, crate_version))
     }
 }
 
 fn parse_deps(toml: &Toml, top_pkg_name: &str) -> Result<Vec<String>, String> {
     match cargo_lock_find_package(toml, top_pkg_name)? {
-        &Toml::Table(ref pkg) => {
-            match pkg.get("dependencies") {
-                Some(&Toml::Array(ref deps_toml_array)) => {
-                    deps_toml_array.iter()
-                        .map(|value| {
-                            if let Some(crate_name) = value.as_str() {
-                                crate_name_version(toml, crate_name)
-                            } else {
-                                Err("Empty dependency".to_string())
-                            }
-                        })
-                        .collect()
-                }
-                _ => Err("error parsing dependencies table".to_string()),
-            }
-        }
+        &Toml::Table(ref pkg) => match pkg.get("dependencies") {
+            Some(&Toml::Array(ref deps_toml_array)) => deps_toml_array
+                .iter()
+                .map(|value| {
+                    if let Some(crate_name) = value.as_str() {
+                        crate_name_version(toml, crate_name)
+                    } else {
+                        Err("Empty dependency".to_string())
+                    }
+                })
+                .collect(),
+            _ => Err("error parsing dependencies table".to_string()),
+        },
         _ => Err("error parsing dependencies table".to_string()),
     }
 }
 
 fn build_package(
-    pkg_name: &str, is_release: bool, target: &str, is_nightly: bool, features: Vec<&str>,
+    pkg_name: &str,
+    is_release: bool,
+    target: &str,
+    is_nightly: bool,
+    features: Vec<&str>,
     is_all_features: bool,
 ) -> Result<(), String> {
     println!("building package: {:?}", pkg_name);
@@ -155,7 +159,9 @@ fn build_package(
         command.arg("+nightly").arg("build")
     } else {
         command.arg("build")
-    }.arg("-p").arg(pkg_name);
+    }
+    .arg("-p")
+    .arg(pkg_name);
 
     let command_with_args = if is_release {
         command_with_args.arg("--release")
@@ -172,7 +178,9 @@ fn build_package(
     let command_with_args = if is_all_features {
         command_with_args.arg("--all-features")
     } else if features.len() > 0 {
-        command_with_args.arg("--features").arg(format!("\"{}\"", features.join(" ")))
+        command_with_args
+            .arg("--features")
+            .arg(format!("\"{}\"", features.join(" ")))
     } else {
         command_with_args
     };
@@ -181,7 +189,9 @@ fn build_package(
 }
 
 fn execute_command(command: &mut Command) -> Result<(), String> {
-    let mut child = command.envs(env::vars()).spawn()
+    let mut child = command
+        .envs(env::vars())
+        .spawn()
         .map_err(|_| "failed to execute process".to_string())?;
 
     let exit_status = child.wait().expect("failed to run command");
