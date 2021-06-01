@@ -30,7 +30,8 @@ fn main() -> Result<(), String> {
         None => Vec::new(),
     };
 
-    execute_command(Command::new("cargo").arg("update"))?;
+    // Don't do the update !
+    // execute_command(Command::new("cargo").arg("update"))?;
 
     let cargo_toml = get_toml("Cargo.toml");
     let top_pkg_name = parse_package_name(&cargo_toml);
